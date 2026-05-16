@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CodeCinema</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="rail">
+        <div class="brand-mark">CC</div>
+        <div class="rail-line"></div>
+        <button class="rail-button active" data-jump="workspace" title="Workspace">W</button>
+        <button class="rail-button" data-jump="answer" title="Answer">A</button>
+        <button class="rail-button" data-jump="diagram" title="Diagram">M</button>
+        <button class="rail-button" data-jump="video" title="Video">V</button>
+      </aside>
+
+      <main>
+        <section id="workspace" class="workspace-grid">
+          <div class="query-panel">
+            <div class="topline">
+              <div>
+                <p class="eyebrow">CodeCinema</p>
+                <h1>Repository explainer studio</h1>
+              </div>
+              <div class="health-pill" id="healthPill">Checking local stack</div>
+            </div>
+
+            <form id="queryForm" class="query-form">
+              <label>
+                <span>Repo source</span>
+                <input id="repoPath" name="repoPath" autocomplete="off" placeholder="/Users/you/project" />
+              </label>
+              <div class="folder-picker-row">
+                <input id="folderInput" class="visually-hidden" type="file" webkitdirectory directory multiple />
+                <button type="button" id="chooseFolderButton" class="secondary-button">Choose Folder</button>
+                <button type="button" id="clearFolderButton" class="text-button" disabled>Clear Folder</button>
+                <span id="sourceBadge" class="source-badge">Using typed path</span>
+              </div>
+
+              <label>
+                <span>User query</span>
+                <textarea id="query" name="query" rows="4" placeholder="Explain authentication flow"></textarea>
+              </label>
+
+              <div class="form-row">
+                <label>
+                  <span>Explain like</span>
+                  <select id="mode" name="mode">
+                    <option value="junior developer">Junior developer</option>
+                    <option value="system designer">System designer</option>
+                    <option value="security researcher">Security researcher</option>
+                    <option value="interviewer">Interviewer</option>
+                    <option value="product manager">Product manager</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Gemma model</span>
+                  <input id="modelDisplay" disabled value="gemma4:e2b" />
+                </label>
+              </div>
+
+              <div class="button-row">
+                <button type="button" id="scanButton" class="secondary-button">Scan Repo</button>
+                <button type="submit" id="explainButton" class="primary-button">Generate Explainer</button>
+              </div>
+            </form>
+          </div>
+
+          <div class="stage-panel">
+            <div class="stage-top">
+              <span>Live Storyboard</span>
+              <span id="stageStatus">Idle</span>
+            </div>
+            <div class="stage-screen">
+              <div class="film-strip" aria-hidden="true">
+                <span></span><span></span><span></span><span></span><span></span>
+              </div>
+              <div class="stage-content">
+                <p id="stageTitle">Ask a repository question</p>
+                <div id="stageLines">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+              </div>
+            </div>
+            <div class="stats-grid" id="statsGrid">
+              <div><strong>0</strong><span>files</span></div>
+              <div><strong>0</strong><span>chunks</span></div>
+              <div><strong>0</strong><span>refs</span></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="output-grid">
+          <article id="answer" class="panel">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Answer</p>
+                <h2>Grounded explanation</h2>
+              </div>
+              <span id="modelBadge" class="badge">Ollama</span>
+            </div>
+            <div id="answerBody" class="answer-empty">Generated answer appears here.</div>
+          </article>
+
+          <article class="panel">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">References</p>
+                <h2>Code citations</h2>
+              </div>
+              <span id="citationCount" class="badge">0 refs</span>
+            </div>
+            <div id="citations" class="citation-list"></div>
+          </article>
+        </section>
+
+        <section id="diagram" class="diagram-grid">
+          <article class="panel diagram-panel">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Mermaid</p>
+                <h2>Flow diagram</h2>
+              </div>
+              <div class="inline-actions">
+                <button id="copyMermaidButton" class="text-button" type="button">Copy Mermaid</button>
+                <button id="chartButton" class="text-button" type="button">Mermaid Chart</button>
+              </div>
+            </div>
+            <div id="mermaidPreview" class="mermaid-preview">No diagram yet.</div>
+          </article>
+
+          <article class="panel scenes-panel">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Timeline</p>
+                <h2>Video scenes</h2>
+              </div>
+              <span id="sceneCount" class="badge">0 scenes</span>
+            </div>
+            <div id="scenes" class="scene-list"></div>
+          </article>
+        </section>
+
+        <section id="video" class="panel video-panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Output</p>
+              <h2>Narrated MP4</h2>
+            </div>
+            <button id="renderButton" class="primary-button" type="button" disabled>Render Video</button>
+          </div>
+          <div id="videoOutput" class="video-output">
+            <div class="video-placeholder">Storyboard and narration export will appear here.</div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" role="status"></div>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

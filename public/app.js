@@ -3,7 +3,9 @@ const state = {
   scan: null,
   explanation: null,
   render: null,
-  repoBundle: null
+  repoBundle: null,
+  commits: [],
+  deck: null
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -91,8 +93,13 @@ const elements = {
   chooseFolderButton: $("#chooseFolderButton"),
   clearFolderButton: $("#clearFolderButton"),
   sourceBadge: $("#sourceBadge"),
+  loadCommitsButton: $("#loadCommitsButton"),
+  commitSelect: $("#commitSelect"),
+  explainCommitButton: $("#explainCommitButton"),
+  gitStatus: $("#gitStatus"),
   scanButton: $("#scanButton"),
   explainButton: $("#explainButton"),
+  deckButton: $("#deckButton"),
   renderButton: $("#renderButton"),
   copyMermaidButton: $("#copyMermaidButton"),
   chartButton: $("#chartButton"),
@@ -135,6 +142,9 @@ function setBusy(isBusy, label = "Working") {
   elements.scanButton.disabled = isBusy;
   elements.chooseFolderButton.disabled = isBusy;
   elements.clearFolderButton.disabled = isBusy || !state.repoBundle;
+  elements.loadCommitsButton.disabled = isBusy || Boolean(state.repoBundle);
+  elements.explainCommitButton.disabled = isBusy || !elements.commitSelect.value || Boolean(state.repoBundle);
+  elements.deckButton.disabled = isBusy || !state.explanation;
   elements.renderButton.disabled = isBusy || !state.explanation;
   elements.stageStatus.textContent = isBusy ? label : "Ready";
 }
@@ -227,12 +237,16 @@ function updateRepoSourceUi() {
     elements.sourceBadge.textContent = `Selected folder: ${state.repoBundle.rootName} (${count} files)`;
     elements.repoPath.placeholder = "Folder selected in browser";
     elements.clearFolderButton.disabled = false;
+    elements.loadCommitsButton.disabled = true;
+    elements.explainCommitButton.disabled = true;
+    elements.gitStatus.textContent = "Git commit selection is available for typed local paths.";
     return;
   }
 
   elements.sourceBadge.textContent = "Using typed path";
   elements.repoPath.placeholder = "/Users/you/project";
   elements.clearFolderButton.disabled = true;
+  elements.loadCommitsButton.disabled = false;
 }
 
 function repoRequestBody(extra = {}) {
@@ -329,6 +343,24 @@ function renderScenes(scenes = [], timeline = []) {
     .join("");
 }
 
+function renderCommitOptions(commits = []) {
+  if (!commits.length) {
+    elements.commitSelect.innerHTML = '<option value="">No commits loaded</option>';
+    elements.commitSelect.disabled = true;
+    elements.explainCommitButton.disabled = true;
+    return;
+  }
+
+  elements.commitSelect.innerHTML = commits
+    .map((commit) => {
+      const label = `${commit.shortSha} / ${commit.date} / ${commit.subject}`;
+      return `<option value="${escapeHtml(commit.sha)}">${escapeHtml(label)}</option>`;
+    })
+    .join("");
+  elements.commitSelect.disabled = false;
+  elements.explainCommitButton.disabled = false;
+}
+
 function updateStageForExplanation(explanation) {
   elements.stageTitle.textContent = explanation.scenes?.[0]?.title || "Storyboard generated";
   elements.stageStatus.textContent = "Storyboard ready";
@@ -352,6 +384,30 @@ function renderVideoResult(result) {
     <div class="asset-grid">${assets}</div>
     ${renderWarnings(result.warnings || [])}
   `;
+}
+
+function appendDeckLink(result) {
+  const href = result?.files?.pitchDeck;
+  if (!href) return;
+  const deckRow = document.createElement("div");
+  deckRow.className = "asset-row";
+  deckRow.innerHTML = `<a href="${href}" download>pitchDeck</a>`;
+  let assetGrid = elements.videoOutput.querySelector(".asset-grid");
+  if (!assetGrid) {
+    assetGrid = document.createElement("div");
+    assetGrid.className = "asset-grid";
+    elements.videoOutput.appendChild(assetGrid);
+  }
+  assetGrid.prepend(deckRow);
+}
+
+function downloadHref(href) {
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = "";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
 }
 
 async function loadHealth() {
@@ -383,6 +439,11 @@ async function scanRepo() {
     updateStats(scan.stats, state.explanation?.citations?.length || 0);
     elements.stageTitle.textContent = "Repository scanned";
     elements.stageStatus.textContent = `${scan.stats.fileCount} files indexed`;
+    if (!state.repoBundle && scan.git?.isGitRepo) {
+      elements.gitStatus.textContent = `Git repo detected on ${scan.git.branch}. Load commits to explain a changelog.`;
+    } else if (!state.repoBundle) {
+      elements.gitStatus.textContent = "No Git repository detected for this typed path.";
+    }
     toast("Repo scan complete.");
   } catch (error) {
     toast(error.message);
@@ -411,12 +472,14 @@ async function generateExplainer(event) {
       })
     });
     state.explanation = explanation;
+    state.deck = null;
     renderAnswer(explanation);
     renderCitations(explanation.citations);
     await renderMermaid(explanation.mermaid);
     renderScenes(explanation.scenes, explanation.timeline);
     updateStageForExplanation(explanation);
     elements.renderButton.disabled = false;
+    elements.deckButton.disabled = false;
     if (explanation.warnings?.length) toast(explanation.warnings[0]);
     else toast("Explainer generated.");
   } catch (error) {
@@ -441,7 +504,11 @@ async function handleFolderSelected() {
     state.scan = null;
     state.explanation = null;
     state.render = null;
+    state.deck = null;
+    state.commits = [];
+    renderCommitOptions([]);
     elements.renderButton.disabled = true;
+    elements.deckButton.disabled = true;
     updateRepoSourceUi();
     updateStats({}, 0);
     elements.stageTitle.textContent = "Folder selected";
@@ -463,6 +530,74 @@ function clearSelectedFolder() {
   toast("Folder selection cleared.");
 }
 
+async function loadCommits() {
+  const repoPath = elements.repoPath.value.trim();
+  if (!repoPath) {
+    toast("Enter a local Git repo path first.");
+    return;
+  }
+  if (state.repoBundle) {
+    toast("Commit selection needs a typed local Git path.");
+    return;
+  }
+
+  setBusy(true, "Loading commits");
+  try {
+    const result = await api("/api/git/commits", {
+      method: "POST",
+      body: { repoPath, limit: 50 }
+    });
+    state.commits = result.commits || [];
+    renderCommitOptions(state.commits);
+    elements.gitStatus.textContent = result.isGitRepo
+      ? `${state.commits.length} commits loaded from ${result.branch}.`
+      : "No Git repository detected for this path.";
+    toast(result.isGitRepo ? "Commits loaded." : "Not a Git repository.");
+  } catch (error) {
+    renderCommitOptions([]);
+    elements.gitStatus.textContent = "Could not load commits.";
+    toast(error.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function explainSelectedCommit() {
+  const repoPath = elements.repoPath.value.trim();
+  const commitSha = elements.commitSelect.value;
+  if (!repoPath || !commitSha) {
+    toast("Load commits and select one first.");
+    return;
+  }
+
+  setBusy(true, "Explaining commit");
+  elements.stageTitle.textContent = "Gemma is reading the diff";
+  try {
+    const explanation = await api("/api/explain-commit", {
+      method: "POST",
+      body: {
+        repoPath,
+        commitSha,
+        mode: elements.mode.value
+      }
+    });
+    state.explanation = explanation;
+    state.deck = null;
+    renderAnswer(explanation);
+    renderCitations(explanation.citations);
+    await renderMermaid(explanation.mermaid);
+    renderScenes(explanation.scenes, explanation.timeline);
+    updateStageForExplanation(explanation);
+    elements.renderButton.disabled = false;
+    elements.deckButton.disabled = false;
+    toast(explanation.warnings?.[0] || "Commit changelog generated.");
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
 async function renderVideo() {
   if (!state.explanation) return;
   setBusy(true, "Rendering MP4");
@@ -478,6 +613,26 @@ async function renderVideo() {
     toast(result.files?.video ? "Video render complete." : "Storyboard assets exported.");
   } catch (error) {
     elements.videoOutput.innerHTML = `<div class="video-placeholder">${escapeHtml(error.message)}</div>`;
+    toast(error.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function downloadPitchDeck() {
+  if (!state.explanation) return;
+
+  setBusy(true, "Exporting deck");
+  try {
+    const result = await api("/api/deck", {
+      method: "POST",
+      body: { explanation: state.explanation }
+    });
+    state.deck = result;
+    appendDeckLink(result);
+    if (result.files?.pitchDeck) downloadHref(result.files.pitchDeck);
+    toast("Pitch deck ready.");
+  } catch (error) {
     toast(error.message);
   } finally {
     setBusy(false);
@@ -531,13 +686,22 @@ elements.repoPath.addEventListener("input", () => {
     elements.folderInput.value = "";
     updateRepoSourceUi();
   }
+  state.commits = [];
+  renderCommitOptions([]);
+  elements.gitStatus.textContent = "Use a typed local path to load commits.";
   localStorage.setItem("codec-cinema-repo", elements.repoPath.value);
 });
 elements.chooseFolderButton.addEventListener("click", chooseFolder);
 elements.folderInput.addEventListener("change", handleFolderSelected);
 elements.clearFolderButton.addEventListener("click", clearSelectedFolder);
+elements.loadCommitsButton.addEventListener("click", loadCommits);
+elements.commitSelect.addEventListener("change", () => {
+  elements.explainCommitButton.disabled = !elements.commitSelect.value || Boolean(state.repoBundle);
+});
+elements.explainCommitButton.addEventListener("click", explainSelectedCommit);
 elements.scanButton.addEventListener("click", scanRepo);
 elements.form.addEventListener("submit", generateExplainer);
+elements.deckButton.addEventListener("click", downloadPitchDeck);
 elements.renderButton.addEventListener("click", renderVideo);
 elements.copyMermaidButton.addEventListener("click", copyMermaid);
 elements.chartButton.addEventListener("click", sendToMermaidChart);

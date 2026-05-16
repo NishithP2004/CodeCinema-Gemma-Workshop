@@ -62,6 +62,20 @@
                 </label>
               </div>
 
+              <div class="git-panel">
+                <div>
+                  <span class="mini-label">Git changelog</span>
+                  <p id="gitStatus">Use a typed local path to load commits.</p>
+                </div>
+                <div class="git-controls">
+                  <button type="button" id="loadCommitsButton" class="text-button">Load Commits</button>
+                  <select id="commitSelect" disabled>
+                    <option value="">No commits loaded</option>
+                  </select>
+                  <button type="button" id="explainCommitButton" class="secondary-button" disabled>Explain Commit</button>
+                </div>
+              </div>
+
               <div class="button-row">
                 <button type="button" id="scanButton" class="secondary-button">Scan Repo</button>
                 <button type="submit" id="explainButton" class="primary-button">Generate Explainer</button>
@@ -152,7 +166,10 @@
               <p class="eyebrow">Output</p>
               <h2>Narrated MP4</h2>
             </div>
-            <button id="renderButton" class="primary-button" type="button" disabled>Render Video</button>
+            <div class="inline-actions">
+              <button id="deckButton" class="text-button" type="button" disabled>Download Pitch Deck</button>
+              <button id="renderButton" class="primary-button" type="button" disabled>Render Video</button>
+            </div>
           </div>
           <div id="videoOutput" class="video-output">
             <div class="video-placeholder">Storyboard and narration export will appear here.</div>

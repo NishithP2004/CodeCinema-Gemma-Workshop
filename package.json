@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "node src/server.js",
     "start": "node src/server.js",
-    "check": "node --check src/server.js && node --check src/repoScanner.js && node --check src/ollamaClient.js && node --check src/explainer.js && node --check src/video.js && node --check src/utils.js"
+    "check": "node --check src/server.js && node --check src/repoScanner.js && node --check src/ollamaClient.js && node --check src/explainer.js && node --check src/video.js && node --check src/git.js && node --check src/utils.js"
   },
   "engines": {
     "node": ">=18"

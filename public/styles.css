@@ -274,6 +274,36 @@ input:disabled {
   overflow-wrap: anywhere;
 }
 
+.git-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfaf6;
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.mini-label {
+  color: var(--coral);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.git-panel p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.git-controls {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
 .primary-button,
 .secondary-button,
 .text-button {
@@ -637,6 +667,7 @@ input:disabled {
   }
 
   .form-row,
+  .git-controls,
   .stats-grid,
   .asset-grid {
     grid-template-columns: 1fr;

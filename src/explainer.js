@@ -1,5 +1,6 @@
 const { chatWithOllama, getOllamaConfig } = require("./ollamaClient");
 const { retrieveChunks, scanRepo, scanRepoBundle } = require("./repoScanner");
+const { chunksFromCommitDiff, getCommitDiff } = require("./git");
 const { clipText, normalizeWhitespace } = require("./utils");
 
 const DIAGRAM_PREFIXES = [
@@ -13,11 +14,15 @@ const DIAGRAM_PREFIXES = [
   "gantt"
 ];
 
+const SCENE_LAYOUTS = ["focus", "split", "evidence", "diagram"];
+
 const STORYBOARD_SYSTEM_PROMPT = [
-  "You are CodeCinema's storyboard director: a cinematic technical educator, senior software architect, and ruthless slide editor.",
-  "Your job is to turn code evidence into a short narrated walkthrough that is readable on video.",
-  "Think like a documentary editor: one idea per scene, compact slide text, useful visuals, and grounded citations.",
+  "You are CodeCinema's Hyperframes storyboard director: a cinematic technical educator, senior software architect, and ruthless slide designer.",
+  "Your job is to turn code evidence into premium 16:9 video frames and a downloadable pitch deck, not prose slides.",
+  "Design the hero frame first: one idea, one visual anchor, one short on-screen sentence, and grounded citations.",
+  "Think like a documentary editor: compact slide text, useful visuals, intentional layouts, and spoken narration that carries the detail.",
   "Never write dense slide paragraphs. If a concept needs more detail, split it into another scene instead of making a crowded scene.",
+  "Avoid generic card grids and default tech-pitch filler. Make every scene feel like a composed technical artifact.",
   "Only cite files and line ranges that appear in the provided context. Return only valid JSON."
 ].join(" ");
 
@@ -190,6 +195,18 @@ function createSlideText(value, fallback = "Code evidence drives the explanation
   return `${words.slice(0, 18).join(" ")}...`;
 }
 
+function normalizeSceneLayout(value, index) {
+  const layout = String(value || "").trim().toLowerCase();
+  return SCENE_LAYOUTS.includes(layout) ? layout : SCENE_LAYOUTS[index % SCENE_LAYOUTS.length];
+}
+
+function createSceneEmphasis(scene, fallback) {
+  const raw = scene?.emphasis || scene?.visual || scene?.title || fallback || "Grounded code insight";
+  const words = cleanNarration(raw).split(/\s+/).filter(Boolean);
+  if (!words.length) return "Grounded code insight";
+  return clipText(words.slice(0, 7).join(" "), 70);
+}
+
 function createFallbackMermaid(query, chunks) {
   const topFiles = chunks.slice(0, 5).map((chunk) => chunk.file);
   const uniqueFiles = Array.from(new Set(topFiles));
@@ -220,13 +237,15 @@ function normalizeScenes(scenes, answer, citations, mermaid) {
         .slice(0, 6)
         .map((scene, index) => ({
           title: clipText(scene?.title || `Scene ${index + 1}`, 80),
+          layout: normalizeSceneLayout(scene?.layout, index),
+          emphasis: createSceneEmphasis(scene, scene?.slideText || answer),
           narration: clipText(cleanNarration(scene?.narration || scene?.script || answer), 620),
           slideText: clipText(
             createSlideText(scene?.slideText || scene?.onScreenText || scene?.summary || scene?.narration || scene?.script || answer),
             160
           ),
           visual: clipText(scene?.visual || mermaid.title || "Architecture diagram", 140),
-          codeRefs: Array.isArray(scene?.codeRefs) ? scene.codeRefs.slice(0, 4) : []
+          codeRefs: Array.isArray(scene?.codeRefs) ? scene.codeRefs.slice(0, 2) : []
         }))
         .filter((scene) => scene.narration)
     : [];
@@ -237,6 +256,8 @@ function normalizeScenes(scenes, answer, citations, mermaid) {
   return [
     {
       title: "Question and retrieval",
+      layout: "focus",
+      emphasis: "Find the evidence",
       narration: "CodeCinema starts by scanning the repository and retrieving the files that best match the user question.",
       slideText: "Find the code that answers the question.",
       visual: "Repository map and search hits",
@@ -244,6 +265,8 @@ function normalizeScenes(scenes, answer, citations, mermaid) {
     },
     {
       title: "Main explanation",
+      layout: "split",
+      emphasis: "Explain the flow",
       narration: clipText(cleanNarration(answer), 620),
       slideText: createSlideText(answer),
       visual: mermaid.title,
@@ -251,6 +274,8 @@ function normalizeScenes(scenes, answer, citations, mermaid) {
     },
     {
       title: "References to inspect",
+      layout: "evidence",
+      emphasis: "Trace every claim",
       narration: "The answer is grounded in specific files and line ranges so the viewer can jump from the video back into the implementation.",
       slideText: "Every claim links back to code.",
       visual: "Citation list",
@@ -288,6 +313,68 @@ function fallbackExplanation(query, chunks, error) {
     narration: createNarration(scenes),
     warnings: [clipText(error?.message || String(error || "Gemma response fallback used."), 240)]
   };
+}
+
+function fallbackCommitExplanation(commitDiff, chunks, error) {
+  const citations = chunks.slice(0, 6).map((chunk) => citationFromChunk(chunk, "Changed in this commit"));
+  const changedFiles = commitDiff.files.slice(0, 8).map((file) => `${file.status} ${file.file}`).join(", ");
+  const categories = [];
+  const fileNames = commitDiff.files.map((file) => file.file);
+  if (fileNames.some((file) => /^src\//.test(file))) categories.push("backend and app logic");
+  if (fileNames.some((file) => /^public\//.test(file))) categories.push("browser UI");
+  if (fileNames.some((file) => /README|\.env|package\.json|\.gitignore/.test(file))) categories.push("project setup and documentation");
+  if (fileNames.some((file) => /test|spec/i.test(file))) categories.push("tests");
+  const answer = [
+    `Commit ${commitDiff.commit.shortSha} changes ${commitDiff.files.length} file${commitDiff.files.length === 1 ? "" : "s"}.`,
+    commitDiff.commit.message ? `Commit message: ${commitDiff.commit.message.split(/\r?\n/)[0]}` : "",
+    categories.length ? `Main areas touched: ${categories.join(", ")}.` : "",
+    changedFiles ? `Changed files: ${changedFiles}.` : "",
+    "Review the cited diff sections to see the concrete additions, removals, and renamed paths."
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const mermaid = {
+    title: "Commit change flow",
+    type: "flowchart",
+    code: [
+      "flowchart TD",
+      `  A["Commit ${commitDiff.commit.shortSha}"] --> B["Changed files"]`,
+      '  B --> C["Behavior impact"]',
+      '  C --> D["Review risks"]'
+    ].join("\n")
+  };
+  const scenes = normalizeScenes([], answer, citations, mermaid);
+
+  return {
+    answer,
+    citations,
+    mermaid,
+    scenes,
+    timeline: createTimeline(scenes),
+    narration: createNarration(scenes),
+    warnings: [clipText(error?.message || String(error || "Gemma commit fallback used."), 240)]
+  };
+}
+
+function commitAnswerLooksWeak(answer, commitDiff) {
+  const text = String(answer || "").toLowerCase();
+  if (text.length < 180) return true;
+
+  const concreteFileHit = commitDiff.files
+    .slice(0, 12)
+    .some((file) => text.includes(file.file.toLowerCase()) || text.includes(file.file.split("/").pop().toLowerCase()));
+  if (!concreteFileHit) return true;
+
+  const vaguePhrases = [
+    "significantly enhances",
+    "improves maintainability",
+    "improves testability",
+    "improved type safety",
+    "monolithic setup",
+    "scalability",
+    "robust error handling"
+  ];
+  return vaguePhrases.some((phrase) => text.includes(phrase)) && !text.includes(commitDiff.commit.shortSha.toLowerCase());
 }
 
 function enrichCitations(citations, chunks) {
@@ -334,13 +421,15 @@ async function generateExplanation({ repoPath, repoBundle, query, mode = "junior
         '  "answer": "A concise but useful answer grounded in the repository.",',
         '  "citations": [{"file":"relative/path.ext","startLine":1,"endLine":20,"why":"what this proves"}],',
         '  "mermaid": {"title":"diagram title","type":"flowchart|sequenceDiagram|classDiagram","code":"valid Mermaid diagram code"},',
-        '  "scenes": [{"title":"short scene title","slideText":"very short on-screen text","narration":"spoken narration for this scene","visual":"what appears on screen","codeRefs":["file:1-20"]}],',
+        '  "scenes": [{"title":"short scene title","layout":"focus|split|evidence|diagram","emphasis":"2-7 word visual anchor","slideText":"very short on-screen text","narration":"spoken narration for this scene","visual":"what appears on screen","codeRefs":["file:1-20"]}],',
         '  "timeline": [{"label":"chapter label","seconds":10}]',
         "}",
         "",
         "Rules:",
         "- Prefer 4 to 6 scenes when the answer has multiple steps.",
         "- Each scene title must be 5 words or fewer.",
+        "- Each scene layout must be one of focus, split, evidence, or diagram. Vary layouts to create visual rhythm.",
+        "- Each scene emphasis must be 2 to 7 words and should name the visual anchor, not repeat the title.",
         "- Each scene slideText must be 18 words or fewer. No bullets. No markdown. No code dumps.",
         "- Each scene narration must be 35 to 55 words. It can be richer than slideText, but still concise.",
         "- Each scene visual must be 12 words or fewer.",
@@ -349,7 +438,8 @@ async function generateExplanation({ repoPath, repoBundle, query, mode = "junior
         "- Mermaid must be valid and useful for the specific query.",
         "- Cite filenames and line ranges from the supplied chunks only.",
         "- Keep narration natural for speech.",
-        "- Avoid overflowing slides by using more scenes, not more words per scene."
+        "- Avoid overflowing slides by using more scenes, not more words per scene.",
+        "- Treat slideText as a headline caption for a designed frame; put nuance in narration."
       ].join("\n")
     }
   ];
@@ -414,6 +504,135 @@ async function generateExplanation({ repoPath, repoBundle, query, mode = "junior
   };
 }
 
+async function generateCommitExplanation({ repoPath, commitSha, mode = "junior developer" }) {
+  const commitDiff = await getCommitDiff(repoPath, commitSha);
+  const chunks = chunksFromCommitDiff(commitDiff);
+  const context = [
+    `Commit: ${commitDiff.commit.shortSha} (${commitDiff.commit.sha})`,
+    `Author: ${commitDiff.commit.author} <${commitDiff.commit.email}>`,
+    `Date: ${commitDiff.commit.date}`,
+    "",
+    "Commit message:",
+    commitDiff.commit.message || "(No commit message)",
+    "",
+    "Diff stat:",
+    commitDiff.stat || "(No stat available)",
+    "",
+    "Relevant diff sections:",
+    contextFromChunks(chunks)
+  ].join("\n");
+  const { host, model } = getOllamaConfig();
+  const messages = [
+    {
+      role: "system",
+      content: [
+        STORYBOARD_SYSTEM_PROMPT,
+        "For commit changelog explanations, act like a release-note author and code reviewer.",
+        "Explain what changed, why it matters, likely behavior impact, and review risks without overstating unstated intent."
+      ].join(" ")
+    },
+    {
+      role: "user",
+      content: [
+        `Audience mode: ${mode}`,
+        "",
+        "Commit evidence:",
+        context,
+        "",
+        "Return ONLY valid JSON with this exact shape:",
+        "{",
+        '  "answer": "A concise changelog explanation grounded in the diff.",',
+        '  "citations": [{"file":"relative/path.ext","startLine":1,"endLine":20,"why":"what this diff section proves"}],',
+        '  "mermaid": {"title":"diagram title","type":"flowchart|sequenceDiagram","code":"valid Mermaid diagram code"},',
+        '  "scenes": [{"title":"short scene title","layout":"focus|split|evidence|diagram","emphasis":"2-7 word visual anchor","slideText":"very short on-screen text","narration":"spoken narration for this scene","visual":"what appears on screen","codeRefs":["file:1-20"]}],',
+        '  "timeline": [{"label":"chapter label","seconds":10}]',
+        "}",
+        "",
+        "Rules:",
+        "- Prefer 4 scenes: commit summary, changed areas, behavior impact, review notes.",
+        "- Each scene title must be 5 words or fewer.",
+        "- Each scene layout must be one of focus, split, evidence, or diagram. Use evidence for diff-backed claims.",
+        "- Each scene emphasis must be 2 to 7 words and should name the visual anchor, not repeat the title.",
+        "- Each scene slideText must be 18 words or fewer. No bullets. No markdown. No code dumps.",
+        "- Each scene narration must be 35 to 55 words.",
+        "- Each scene codeRefs should include at most 2 references.",
+        "- Mermaid node labels must be short: 5 words or fewer per node.",
+        "- Cite only files present in the diff sections.",
+        "- Treat slideText as a headline caption for a designed frame; put nuance in narration."
+      ].join("\n")
+    }
+  ];
+
+  let explanation;
+  try {
+    const response = await chatWithOllama(messages);
+    const raw = extractJson(response.content);
+    const citations = (Array.isArray(raw.citations) ? raw.citations : [])
+      .map((citation) => normalizeCitation(citation, chunks))
+      .filter(Boolean);
+    const safeCitations = citations.length ? citations : chunks.slice(0, 5).map((chunk) => citationFromChunk(chunk, "Changed in this commit"));
+    const mermaid = normalizeMermaid(raw.mermaid, `Commit ${commitDiff.commit.shortSha}`, chunks);
+    const warnings = [];
+    let answer = clipText(raw.answer || "", 4000);
+    let useGeneratedScenes = true;
+    if (!answer || commitAnswerLooksWeak(answer, commitDiff)) {
+      answer = fallbackCommitExplanation(commitDiff, chunks).answer;
+      useGeneratedScenes = false;
+      warnings.push("Gemma returned a thin commit summary, so CodeCinema used diff-grounded fallback notes.");
+    }
+    const scenes = normalizeScenes(useGeneratedScenes ? raw.scenes : [], answer, safeCitations, mermaid);
+
+    explanation = {
+      answer,
+      citations: enrichCitations(safeCitations, chunks),
+      mermaid,
+      scenes,
+      timeline: Array.isArray(raw.timeline) && raw.timeline.length ? raw.timeline.slice(0, 6) : createTimeline(scenes),
+      narration: createNarration(scenes),
+      warnings
+    };
+  } catch (error) {
+    explanation = fallbackCommitExplanation(commitDiff, chunks, error);
+    explanation.citations = enrichCitations(explanation.citations, chunks);
+  }
+
+  return {
+    ...explanation,
+    query: `Explain commit ${commitDiff.commit.shortSha}`,
+    mode,
+    repo: {
+      root: commitDiff.root,
+      stats: {
+        fileCount: commitDiff.files.length,
+        chunkCount: chunks.length,
+        totalBytes: Buffer.byteLength(commitDiff.patch || "", "utf8"),
+        skipped: 0,
+        skippedLarge: 0,
+        languages: { diff: chunks.length }
+      },
+      scannedAt: new Date().toISOString()
+    },
+    commit: commitDiff.commit,
+    changedFiles: commitDiff.files,
+    retrieval: chunks.map((chunk) => ({
+      id: chunk.id,
+      file: chunk.file,
+      startLine: chunk.startLine,
+      endLine: chunk.endLine,
+      score: chunk.score,
+      language: chunk.language,
+      preview: chunk.preview
+    })),
+    model: {
+      name: model,
+      host,
+      provider: "ollama"
+    },
+    generatedAt: new Date().toISOString()
+  };
+}
+
 module.exports = {
+  generateCommitExplanation,
   generateExplanation
 };

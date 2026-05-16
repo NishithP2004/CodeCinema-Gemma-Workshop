@@ -1,10 +1,11 @@
 const http = require("http");
 const fs = require("fs/promises");
 const path = require("path");
-const { generateExplanation } = require("./explainer");
+const { generateCommitExplanation, generateExplanation } = require("./explainer");
 const { getOllamaConfig } = require("./ollamaClient");
 const { scanRepo, scanRepoBundle } = require("./repoScanner");
-const { commandExists, createMermaidChart, renderVideoBundle } = require("./video");
+const { getGitInfo, listCommits } = require("./git");
+const { commandExists, createMermaidChart, renderPitchDeck, renderVideoBundle } = require("./video");
 const { clipText, loadEnv } = require("./utils");
 
 loadEnv();
@@ -107,8 +108,10 @@ async function handleApi(req, res) {
   if (req.method === "POST" && url.pathname === "/api/scan") {
     const body = await readJson(req);
     const repo = await scanRepo(body.repoPath);
+    const git = await getGitInfo(body.repoPath);
     sendJson(res, 200, {
       root: repo.root,
+      git,
       stats: repo.stats,
       scannedAt: repo.scannedAt,
       files: repo.files.slice(0, 120).map((file) => ({
@@ -118,6 +121,13 @@ async function handleApi(req, res) {
         bytes: file.bytes
       }))
     });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/git/commits") {
+    const body = await readJson(req);
+    const result = await listCommits(body.repoPath, body.limit || 40);
+    sendJson(res, 200, result);
     return;
   }
 
@@ -148,6 +158,30 @@ async function handleApi(req, res) {
       mode: body.mode
     });
     sendJson(res, 200, explanation);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/explain-commit") {
+    const body = await readJson(req);
+    const explanation = await generateCommitExplanation({
+      repoPath: body.repoPath,
+      commitSha: body.commitSha,
+      mode: body.mode
+    });
+    sendJson(res, 200, explanation);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/deck") {
+    const body = await readJson(req);
+    const deckPath = await renderPitchDeck(body.explanation || body);
+    const id = path.basename(path.dirname(deckPath));
+    sendJson(res, 200, {
+      id,
+      files: {
+        pitchDeck: `/artifacts/${id}/${path.basename(deckPath)}`
+      }
+    });
     return;
   }
 
